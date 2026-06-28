@@ -1,71 +1,43 @@
 from fastapi import FastAPI, HTTPException
-from playwright.async_api import async_playwright
-import asyncio
+from fastapi.responses import JSONResponse
+import requests
 import re
 from urllib.parse import quote
+import time
 
-app = FastAPI(title="Google Lens + Gemini Proxy")
+app = FastAPI()
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml",
+    "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.8",
+}
 
 @app.get("/lens")
-async def lens(pic: str, q: str = "معنی این عکس چیه؟ توضیح کامل بده"):
-    if not pic.startswith(("http",)):
-        raise HTTPException(400, "pic نامعتبر")
-    
+async def lens(pic: str, q: str = "معنی این عکس چیه"):
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--disable-infobars',
-                    '--window-size=1280,900'
-                ]
-            )
-            page = await browser.new_page(
-                viewport={"width": 1280, "height": 900},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-            )
-            
-            # مخفی کردن اتوماتیک بودن
-            await page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-            """)
-            
-            lens_url = f"https://lens.google.com/uploadbyurl?url={quote(pic)}&hl=fa&re=df"
-            await page.goto(lens_url, wait_until="domcontentloaded", timeout=60000)
-            
-            await asyncio.sleep(6)  # صبر بیشتر
-            await page.wait_for_load_state("networkidle", timeout=40000)
-            
-            # استخراج بهتر
-            content = await page.evaluate("""() => document.body.innerText""")
-            
-            # فیلتر بهتر برای Gemini response
-            patterns = [
-                r'(?:این تصویر|این عکس|نشان می‌دهد|Gemini|خلاصه|توضیح|تحلیل|شناسایی).*?(?=\n{4,}|\Z)',
-                r'(.{100,600}?(?:توضیح|معنی|چیست|است))'  # fallback
-            ]
-            
-            gemini_response = "جواب Gemini پیدا نشد"
-            for pattern in patterns:
-                match = re.search(pattern, content, re.S | re.I)
-                if match:
-                    gemini_response = match.group(0).strip()
-                    break
-            
-            await browser.close()
-            
-            return {
-                "status": "success",
-                "image_url": pic,
-                "query": q,
-                "gemini_response": gemini_response,
-                "raw_length": len(content)
-            }
-            
+        # اول redirect به صفحه Lens
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        
+        lens_url = f"https://lens.google.com/uploadbyurl?url={quote(pic)}&hl=fa"
+        resp = session.get(lens_url, allow_redirects=True, timeout=30)
+        
+        text = resp.text
+        
+        # سعی استخراج Gemini part
+        gemini_match = re.search(r'(?:این تصویر|این عکس|Gemini|توضیح|خلاصه|شناسایی|تحلیل).*?(\.|!|\?|\n\n)', text, re.S | re.I)
+        
+        if gemini_match:
+            response_text = gemini_match.group(0)
+        else:
+            response_text = "جواب Gemini استخراج نشد. تصویر رو دستی در Google Lens تست کن."
+        
+        return {
+            "status": "success",
+            "image_url": pic,
+            "gemini_response": response_text.strip()[:800],
+        }
+        
     except Exception as e:
-        raise HTTPException(500, f"خطا: {str(e)}")
+        raise HTTPException(500, str(e))
