@@ -1,42 +1,42 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 import requests
-import re
 from urllib.parse import quote
-import time
 
-app = FastAPI()
+app = FastAPI(title="Image Analysis API")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml",
-    "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.8",
-}
+HF_TOKEN = "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"   # بعداً بذار (اختیاری، بدون توکن هم کار می‌کنه با محدودیت)
 
 @app.get("/lens")
-async def lens(pic: str, q: str = "معنی این عکس چیه"):
+async def lens(pic: str, q: str = "معنی این عکس چیه؟ توضیح کامل و دقیق بده"):
     try:
-        # اول redirect به صفحه Lens
-        session = requests.Session()
-        session.headers.update(HEADERS)
+        # استفاده از مدل vision رایگان Hugging Face
+        payload = {
+            "inputs": {
+                "image": pic,   # مستقیم URL می‌گیره
+                "prompt": q
+            }
+        }
         
-        lens_url = f"https://lens.google.com/uploadbyurl?url={quote(pic)}&hl=fa"
-        resp = session.get(lens_url, allow_redirects=True, timeout=30)
+        # مدل خوب و سریع
+        model = "Salesforce/blip-image-captioning-large"   # یا "google/paligemma-3b-mix-448"
         
-        text = resp.text
+        response = requests.post(
+            f"https://api-inference.huggingface.co/models/{model}",
+            json=payload,
+            headers={"Authorization": f"Bearer {HF_TOKEN}" if HF_TOKEN != "hf_..." else ""}
+        )
         
-        # سعی استخراج Gemini part
-        gemini_match = re.search(r'(?:این تصویر|این عکس|Gemini|توضیح|خلاصه|شناسایی|تحلیل).*?(\.|!|\?|\n\n)', text, re.S | re.I)
-        
-        if gemini_match:
-            response_text = gemini_match.group(0)
+        if response.status_code == 200:
+            result = response.json()
+            description = result[0]["generated_text"] if isinstance(result, list) else str(result)
         else:
-            response_text = "جواب Gemini استخراج نشد. تصویر رو دستی در Google Lens تست کن."
+            description = f"خطا از HF: {response.text[:200]}"
         
         return {
             "status": "success",
             "image_url": pic,
-            "gemini_response": response_text.strip()[:800],
+            "query": q,
+            "response": description
         }
         
     except Exception as e:
