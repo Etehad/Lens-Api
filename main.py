@@ -23,7 +23,7 @@ async def lens(pic: str, q: str = "معنی این عکس چیه؟ توضیح ک
         response = requests.post(
             f"https://api-inference.huggingface.co/models/{model}",
             json=payload,
-            headers={"Authorization": f"Bearer {HF_TOKEN}" if HF_TOKEN != "hf_..." else ""}
+            headers={"Authorization": f"Bearer {HF_TOKEN}" if HF_TOKEN != "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" else ""}
         )
         
         if response.status_code == 200:
